@@ -26,3 +26,8 @@ tar -xf "${CACHE_DIR}/${TAR_FILE_NAME}" -C "${CACHE_DIR}/supervisord" --strip-co
 
 mkdir -p "${BUILD_DIR}/bin"
 mv "${CACHE_DIR}/supervisord/supervisord" "${BUILD_DIR}/bin/supervisord"
+
+mkdir -p "${BUILD_DIR}/.profile.d"
+cat > "${BUILD_DIR}/.profile.d/supervisord.sh" <<'PROFILE'
+export PATH="$HOME/bin:$PATH"
+PROFILE
