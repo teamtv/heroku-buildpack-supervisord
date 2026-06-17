@@ -1,62 +1,28 @@
 #!/usr/bin/env bash
-set -euo pipefail
+# bin/compile <build-dir> <cache-dir> <env-dir>
+set -eo pipefail
 
 BUILD_DIR=$1
 CACHE_DIR=$2
 ENV_DIR=$3
 
-SUPERVISORD_VERSION="${SUPERVISORD_VERSION:-4.2.5}"
-VENDOR_DIR="${BUILD_DIR}/.heroku/supervisord"
-CACHE_KEY="${CACHE_DIR}/supervisord-${SUPERVISORD_VERSION}"
+SUPERVISORD_VERSION="${SUPERVISORD_VERSION:-0.7.3}"
+TAR_FILE_NAME="supervisord_${SUPERVISORD_VERSION}_Linux_64-bit.tar.gz"
 
-echo "-----> Supervisord buildpack"
+function topic() {
+  echo "-----> $*"
+}
 
-if [[ -d "${CACHE_KEY}" ]]; then
-    echo "       Restoring supervisord ${SUPERVISORD_VERSION} from cache"
-    cp -r "${CACHE_KEY}" "${VENDOR_DIR}"
+if [ ! -f "${CACHE_DIR}/${TAR_FILE_NAME}" ]; then
+  topic "Downloading supervisord ${SUPERVISORD_VERSION}"
+  wget -q -P "${CACHE_DIR}" "https://github.com/ochinchina/supervisord/releases/download/v${SUPERVISORD_VERSION}/${TAR_FILE_NAME}"
 else
-    echo "       Installing supervisord ${SUPERVISORD_VERSION}"
-    mkdir -p "${VENDOR_DIR}/bin" "${VENDOR_DIR}/pkgs"
-
-    # Heroku-24 ships python3 without pip — bootstrap pip into a temp target dir
-    PIP_BOOTSTRAP=$(mktemp -d)
-    curl -sS https://bootstrap.pypa.io/get-pip.py -o "${PIP_BOOTSTRAP}/get-pip.py"
-    python3 "${PIP_BOOTSTRAP}/get-pip.py" --target="${PIP_BOOTSTRAP}/pkgs" --quiet
-
-    # Install supervisor Python package into vendor/pkgs (flat --target layout)
-    PYTHONPATH="${PIP_BOOTSTRAP}/pkgs" python3 -m pip install \
-        --target="${VENDOR_DIR}/pkgs" \
-        --quiet \
-        "supervisor==${SUPERVISORD_VERSION}"
-    rm -rf "${PIP_BOOTSTRAP}"
-
-    # Write self-contained wrappers — they resolve pkgs relative to themselves
-    # so they work regardless of whether PYTHONPATH is set in the environment
-    cat > "${VENDOR_DIR}/bin/supervisord" <<'SCRIPT'
-#!/bin/bash
-D="$(cd "$(dirname "$0")" && pwd)"
-PYTHONPATH="${D}/../pkgs${PYTHONPATH:+:$PYTHONPATH}" exec python3 -m supervisor.supervisord "$@"
-SCRIPT
-
-    cat > "${VENDOR_DIR}/bin/supervisorctl" <<'SCRIPT'
-#!/bin/bash
-D="$(cd "$(dirname "$0")" && pwd)"
-PYTHONPATH="${D}/../pkgs${PYTHONPATH:+:$PYTHONPATH}" exec python3 -m supervisor.supervisorctl "$@"
-SCRIPT
-
-    chmod +x "${VENDOR_DIR}/bin/supervisord" "${VENDOR_DIR}/bin/supervisorctl"
-
-    # Smoke-test at build time so a bad install fails the build, not the dyno
-    PYTHONPATH="${VENDOR_DIR}/pkgs" python3 -m supervisor.supervisord --help > /dev/null
-
-    rm -rf "${CACHE_DIR}"/supervisord-*
-    cp -r "${VENDOR_DIR}" "${CACHE_KEY}"
+  topic "Using cached supervisord ${SUPERVISORD_VERSION}"
 fi
 
-# Use absolute /app path — $HOME may not be set when .profile.d scripts are sourced
-mkdir -p "${BUILD_DIR}/.profile.d"
-cat > "${BUILD_DIR}/.profile.d/supervisord.sh" <<'PROFILE'
-export PATH="/app/.heroku/supervisord/bin:$PATH"
-PROFILE
+topic "Installing supervisord"
+mkdir -p "${CACHE_DIR}/supervisord"
+tar -xf "${CACHE_DIR}/${TAR_FILE_NAME}" -C "${CACHE_DIR}/supervisord" --strip-components=1
 
-echo "       supervisord ${SUPERVISORD_VERSION} ready"
+mkdir -p "${BUILD_DIR}/bin"
+mv "${CACHE_DIR}/supervisord/supervisord" "${BUILD_DIR}/bin/supervisord"

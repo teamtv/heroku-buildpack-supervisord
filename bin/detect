@@ -1,3 +1,3 @@
 #!/usr/bin/env bash
-# This buildpack is explicitly added — always pass detection.
+echo "Supervisord"
 exit 0
