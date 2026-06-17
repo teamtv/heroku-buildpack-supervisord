@@ -13,45 +13,50 @@ echo "-----> Supervisord buildpack"
 
 if [[ -d "${CACHE_KEY}" ]]; then
     echo "       Restoring supervisord ${SUPERVISORD_VERSION} from cache"
-    mkdir -p "${VENDOR_DIR}"
-    cp -r "${CACHE_KEY}/." "${VENDOR_DIR}/"
+    cp -r "${CACHE_KEY}" "${VENDOR_DIR}"
 else
     echo "       Installing supervisord ${SUPERVISORD_VERSION}"
-    mkdir -p "${VENDOR_DIR}/bin"
+    mkdir -p "${VENDOR_DIR}/bin" "${VENDOR_DIR}/pkgs"
 
-    # Heroku-24 ships python3 without pip. Bootstrap pip into a temp target dir,
-    # then use python3 -m pip from there to install supervisor with --prefix.
+    # Heroku-24 ships python3 without pip — bootstrap pip into a temp target dir
     PIP_BOOTSTRAP=$(mktemp -d)
     curl -sS https://bootstrap.pypa.io/get-pip.py -o "${PIP_BOOTSTRAP}/get-pip.py"
     python3 "${PIP_BOOTSTRAP}/get-pip.py" --target="${PIP_BOOTSTRAP}/pkgs" --quiet
 
+    # Install supervisor Python package into vendor/pkgs (flat --target layout)
     PYTHONPATH="${PIP_BOOTSTRAP}/pkgs" python3 -m pip install \
-        --prefix="${VENDOR_DIR}" \
+        --target="${VENDOR_DIR}/pkgs" \
         --quiet \
         "supervisor==${SUPERVISORD_VERSION}"
-
     rm -rf "${PIP_BOOTSTRAP}"
 
-    # Rewrite absolute Python shebangs so scripts work after the app is placed at /app
-    find "${VENDOR_DIR}/bin" -maxdepth 1 -type f | while read -r f; do
-        if head -1 "${f}" | grep -q "^#!.*python"; then
-            sed -i "1s|^#!.*$|#!/usr/bin/env python3|" "${f}"
-        fi
-    done
+    # Write self-contained wrappers — they resolve pkgs relative to themselves
+    # so they work regardless of whether PYTHONPATH is set in the environment
+    cat > "${VENDOR_DIR}/bin/supervisord" <<'SCRIPT'
+#!/bin/bash
+D="$(cd "$(dirname "$0")" && pwd)"
+PYTHONPATH="${D}/../pkgs${PYTHONPATH:+:$PYTHONPATH}" exec python3 -m supervisor.supervisord "$@"
+SCRIPT
 
-    # Cache this version; evict any older cached versions
+    cat > "${VENDOR_DIR}/bin/supervisorctl" <<'SCRIPT'
+#!/bin/bash
+D="$(cd "$(dirname "$0")" && pwd)"
+PYTHONPATH="${D}/../pkgs${PYTHONPATH:+:$PYTHONPATH}" exec python3 -m supervisor.supervisorctl "$@"
+SCRIPT
+
+    chmod +x "${VENDOR_DIR}/bin/supervisord" "${VENDOR_DIR}/bin/supervisorctl"
+
+    # Smoke-test at build time so a bad install fails the build, not the dyno
+    PYTHONPATH="${VENDOR_DIR}/pkgs" python3 -m supervisor.supervisord --help > /dev/null
+
     rm -rf "${CACHE_DIR}"/supervisord-*
     cp -r "${VENDOR_DIR}" "${CACHE_KEY}"
 fi
 
-# Capture the Python minor version at build time — site-packages path depends on it
-PYTHON_VERSION=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
-
-# .profile.d scripts are sourced by Heroku before every dyno command
+# Use absolute /app path — $HOME may not be set when .profile.d scripts are sourced
 mkdir -p "${BUILD_DIR}/.profile.d"
-cat > "${BUILD_DIR}/.profile.d/supervisord.sh" <<PROFILE
-export PATH="\$HOME/.heroku/supervisord/bin:\$PATH"
-export PYTHONPATH="\$HOME/.heroku/supervisord/lib/python${PYTHON_VERSION}/site-packages\${PYTHONPATH:+:\$PYTHONPATH}"
+cat > "${BUILD_DIR}/.profile.d/supervisord.sh" <<'PROFILE'
+export PATH="/app/.heroku/supervisord/bin:$PATH"
 PROFILE
 
-echo "       supervisord $("${VENDOR_DIR}/bin/supervisord" --version 2>&1 | head -1) ready"
+echo "       supervisord ${SUPERVISORD_VERSION} ready"
