@@ -13,4 +13,4 @@ git commit -m "Release buildpack" || echo "Nothing to commit"
 git push origin main
 
 echo "Pushed. Add to app with:"
-echo "  heroku buildpacks:add https://github.com/gitNbloks/heroku-buildpack-supervisord -a <app>"
+echo "  heroku buildpacks:add https://github.com/TeamTV/heroku-buildpack-supervisord -a <app>"
