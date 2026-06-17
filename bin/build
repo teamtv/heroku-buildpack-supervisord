@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+layers_dir="${CNB_LAYERS_DIR:-$1}"
+
+# Allow the supervisor package version to be overridden via CNB platform env var.
+SUPERVISORD_VERSION="${SUPERVISORD_VERSION:-4.2.5}"
+
+layer="${layers_dir}/supervisord"
+
+echo "---> Supervisord Buildpack"
+
+# Ensure the layer directory exists before writing the version cache file.
+mkdir -p "${layer}"
+
+# Write the layer TOML on every build — CNB requires this to re-declare layer types.
+# launch=true makes the layer's bin/ directory available on PATH at runtime.
+# cache=true persists the layer directory between builds for fast reinstalls.
+cat > "${layer}.toml" <<TOML
+[types]
+  build = false
+  launch = true
+  cache = true
+
+[metadata]
+  version = "${SUPERVISORD_VERSION}"
+TOML
+
+# Use a plain version file inside the layer for cache invalidation (avoids TOML parsing).
+cached_version=$(cat "${layer}/.supervisord-version" 2>/dev/null || echo "")
+
+if [[ "${cached_version}" == "${SUPERVISORD_VERSION}" ]] && [[ -x "${layer}/bin/supervisord" ]]; then
+    echo "---> Reusing cached supervisord ${SUPERVISORD_VERSION}"
+else
+    echo "---> Installing supervisord ${SUPERVISORD_VERSION}"
+
+    # Wipe any stale cache before creating a fresh venv.
+    rm -rf "${layer}"
+    mkdir -p "${layer}"
+
+    # A venv gives us an isolated pip and avoids modifying the system Python.
+    # The venv's bin/ directory will be auto-prepended to PATH by the CNB lifecycle.
+    python3 -m venv "${layer}"
+    "${layer}/bin/pip" install --quiet "supervisor==${SUPERVISORD_VERSION}"
+
+    # Record installed version so subsequent builds can skip reinstall.
+    echo "${SUPERVISORD_VERSION}" > "${layer}/.supervisord-version"
+
+    actual_version=$("${layer}/bin/supervisord" --version 2>&1 | head -1)
+    echo "---> Installed supervisord ${actual_version}"
+fi
