@@ -38,8 +38,6 @@ else
     rm -rf "${layer}"
     mkdir -p "${layer}"
 
-    # A venv gives us an isolated pip and avoids modifying the system Python.
-    # The venv's bin/ directory will be auto-prepended to PATH by the CNB lifecycle.
     python3 -m venv "${layer}"
     "${layer}/bin/pip" install --quiet "supervisor==${SUPERVISORD_VERSION}"
 
@@ -49,3 +47,8 @@ else
     actual_version=$("${layer}/bin/supervisord" --version 2>&1 | head -1)
     echo "---> Installed supervisord ${actual_version}"
 fi
+
+# CNB does not automatically prepend layer bin/ to PATH at launch — must be set explicitly.
+mkdir -p "${layer}/env.launch"
+printf "%s" "${layer}/bin" > "${layer}/env.launch/PATH.prepend"
+printf ":"               > "${layer}/env.launch/PATH.delim"
