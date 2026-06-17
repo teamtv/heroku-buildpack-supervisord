@@ -19,10 +19,18 @@ else
     echo "       Installing supervisord ${SUPERVISORD_VERSION}"
     mkdir -p "${VENDOR_DIR}/bin"
 
-    # Heroku-24 ships python3 but not pip — bootstrap it into the vendor dir
-    curl -sS https://bootstrap.pypa.io/get-pip.py | python3 - --prefix="${VENDOR_DIR}" --quiet
+    # Heroku-24 ships python3 without pip. Bootstrap pip into a temp target dir,
+    # then use python3 -m pip from there to install supervisor with --prefix.
+    PIP_BOOTSTRAP=$(mktemp -d)
+    curl -sS https://bootstrap.pypa.io/get-pip.py -o "${PIP_BOOTSTRAP}/get-pip.py"
+    python3 "${PIP_BOOTSTRAP}/get-pip.py" --target="${PIP_BOOTSTRAP}/pkgs" --quiet
 
-    "${VENDOR_DIR}/bin/pip" install --prefix="${VENDOR_DIR}" --quiet "supervisor==${SUPERVISORD_VERSION}"
+    PYTHONPATH="${PIP_BOOTSTRAP}/pkgs" python3 -m pip install \
+        --prefix="${VENDOR_DIR}" \
+        --quiet \
+        "supervisor==${SUPERVISORD_VERSION}"
+
+    rm -rf "${PIP_BOOTSTRAP}"
 
     # Rewrite absolute Python shebangs so scripts work after the app is placed at /app
     find "${VENDOR_DIR}/bin" -maxdepth 1 -type f | while read -r f; do
