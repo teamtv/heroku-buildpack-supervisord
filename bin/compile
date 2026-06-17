@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+BUILD_DIR=$1
+CACHE_DIR=$2
+ENV_DIR=$3
+
+SUPERVISORD_VERSION="${SUPERVISORD_VERSION:-4.2.5}"
+VENDOR_DIR="${BUILD_DIR}/.heroku/supervisord"
+CACHE_KEY="${CACHE_DIR}/supervisord-${SUPERVISORD_VERSION}"
+
+echo "-----> Supervisord buildpack"
+
+if [[ -d "${CACHE_KEY}" ]]; then
+    echo "       Restoring supervisord ${SUPERVISORD_VERSION} from cache"
+    mkdir -p "${VENDOR_DIR}"
+    cp -r "${CACHE_KEY}/." "${VENDOR_DIR}/"
+else
+    echo "       Installing supervisord ${SUPERVISORD_VERSION}"
+    mkdir -p "${VENDOR_DIR}"
+    python3 -m pip install --quiet --prefix="${VENDOR_DIR}" "supervisor==${SUPERVISORD_VERSION}"
+
+    # Rewrite absolute Python shebangs so scripts work after the app is placed at /app
+    find "${VENDOR_DIR}/bin" -maxdepth 1 -type f | while read -r f; do
+        if head -1 "${f}" | grep -q "^#!.*python"; then
+            sed -i "1s|^#!.*$|#!/usr/bin/env python3|" "${f}"
+        fi
+    done
+
+    # Cache this version; evict any older cached versions
+    rm -rf "${CACHE_DIR}"/supervisord-*
+    cp -r "${VENDOR_DIR}" "${CACHE_KEY}"
+fi
+
+# Capture the Python minor version at build time — site-packages path depends on it
+PYTHON_VERSION=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+
+# .profile.d scripts are sourced by Heroku before every dyno command
+mkdir -p "${BUILD_DIR}/.profile.d"
+cat > "${BUILD_DIR}/.profile.d/supervisord.sh" <<PROFILE
+export PATH="\$HOME/.heroku/supervisord/bin:\$PATH"
+export PYTHONPATH="\$HOME/.heroku/supervisord/lib/python${PYTHON_VERSION}/site-packages\${PYTHONPATH:+:\$PYTHONPATH}"
+PROFILE
+
+echo "       supervisord $("${VENDOR_DIR}/bin/supervisord" --version 2>&1 | head -1) ready"
