@@ -17,8 +17,12 @@ if [[ -d "${CACHE_KEY}" ]]; then
     cp -r "${CACHE_KEY}/." "${VENDOR_DIR}/"
 else
     echo "       Installing supervisord ${SUPERVISORD_VERSION}"
-    mkdir -p "${VENDOR_DIR}"
-    python3 -m pip install --quiet --prefix="${VENDOR_DIR}" "supervisor==${SUPERVISORD_VERSION}"
+    mkdir -p "${VENDOR_DIR}/bin"
+
+    # Heroku-24 ships python3 but not pip — bootstrap it into the vendor dir
+    curl -sS https://bootstrap.pypa.io/get-pip.py | python3 - --prefix="${VENDOR_DIR}" --quiet
+
+    "${VENDOR_DIR}/bin/pip" install --prefix="${VENDOR_DIR}" --quiet "supervisor==${SUPERVISORD_VERSION}"
 
     # Rewrite absolute Python shebangs so scripts work after the app is placed at /app
     find "${VENDOR_DIR}/bin" -maxdepth 1 -type f | while read -r f; do
